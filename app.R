@@ -2,6 +2,8 @@
 library(shiny)
 library(ggplot2)
 library(fmsb)
+library(reshape)
+library(scales)
 #-------------------------------------------------------------------------------
 # Load wine ratings csv to data frame:
 wineDFraw = read.csv("winemag-data-130k-v2.csv")
@@ -92,6 +94,28 @@ plotRadar = function(varclusDF,color){
   )
 }
 #-------------------------------------------------------------------------------
+# This creates the kmeans SSE vs. Number of Clusters plot, for each wine variety
+plotSSE = function(wineDF){
+  SSE = data.frame(clusters=c(1:12))
+  for(variety in varieties){
+    varietyDF = wineDF[wineDF$variety==variety,]
+    wss = NA
+    for (i in SSE$clusters){
+      wss[i] = kmeans(scale(c(varietyDF$price,varietyDF$points)), centers=i)$tot.withinss
+    }
+    SSE[variety] = wss
+  } 
+  SSE.melted <- melt(SSE, id = "clusters")
+  names(SSE.melted)[2] = "Variety"
+  return(
+    ggplot(data = SSE.melted, aes(x = clusters, y = value, color = Variety)) +
+      geom_point() + geom_line() + scale_y_continuous(trans='log10') +
+      scale_x_continuous(breaks=pretty_breaks()) + 
+      xlab("Number of Clusters") + ylab("Sum Squared Error") + 
+      ggtitle("SSE by Number of Clusters for each Wine Variety")
+  )
+}
+#-------------------------------------------------------------------------------
 # User-Interface Function:
 ui <- fluidPage(
   navbarPage(
@@ -114,10 +138,11 @@ ui <- fluidPage(
              )),
     tabPanel("Data Collected",
              h3("About the Data:"),
-             p("The dataset used for this analysis is a csv file containing wine reviews of roughly 130,000 different wines. Each review contains information such as the country of origin, wine description, price, points rating, wine variety, etc. The dataset can be found at:", 
+             p("The dataset used for this analysis is a csv file containing wine reviews of roughly 130,000 different wines. The wine reviews were scraped from WineEnthusiast by 'ZACKTHOUTT' on kaggle. Each review contains information such as the country of origin, wine description, price, points rating, wine variety, etc. The dataset can be found at:", 
              a("https://www.kaggle.com/datasets/zynicide/wine-reviews")),
              br(),
-             h3("First 6 Reviews in Dataset:"),
+             h3("Explore The Raw Dataset:"),
+             sliderInput("rowsView", h4("Select rows of the dataset to view:"), min = 0, max = length(wineDFraw[,1])-11, value = 0),
              tableOutput("summaryTable")
              ),
     tabPanel("Analysis Techniques",
@@ -125,14 +150,16 @@ ui <- fluidPage(
              h4("1.) Download Data"),
              p("The data was downloaded from kaggle.com as a csv file. The csv file was loaded into r and converted to a data frame."),
              h4("2.) Filter Data"),
-             p("The data frame was filtered so only the 10 most commonly rated wine varieties were considered. To do this, all wine varieties were counted by how many times they appeared in a review. Then they were ordered by most to least frequent. Any review with a wine variety not in the top 10 most-frequent list was filtered out."),
+             p("The data frame was filtered so only the 10 most commonly rated wine varieties were considered. This reduced the data set from ~130,000 reviews to ~67,000 reviews. To do this, all wine varieties were counted by how many times they appeared in a review. Then they were ordered by most to least frequent. Any review with a wine variety not in the top 10 most-frequent list was filtered out."),
              p("Next, the uneeded columns were removed from the data frame. The analysis only required the columns: country, description, points, price, and variety."),
              p("Lastly, rows containing any 'NA' values were removed from the data frame, to guarentee completeness of the data. There was enough data that this did not impact the data frame's size much."),
              h4("3.) Cluster Data"),
              p("The data frame was broken up by variety to create 10 new data frames nicknamed varietyDF's."),
-             p("Each varietyDF was clustered using the kmeans clustering algorithm. The two variables used to cluster were the wine price and the wine points rating."),
-             p("The SSE (sum squared error) was evaluated at different cluster numbers, to determine that between 2 and 8 clusters described the data well enough for each variety."),
-             p("The kmean clustering algorithm assigned a cluster number to each varietyDF's review. The cluster number for each wine review was added as a new column in each varietyDF's data frame."),
+             p("Each varietyDF was clustered using the kmeans clustering algorithm. The kmeans clustering algorithm works by randomly assigning n points within a data set. Then, the algorithm calculates the distance of each value in the data set to these random points. Each value in the data set is assigned to one of these random points, based on minimized distance. For each random point, all data set values assigned to it are used to compute the center of mass for that group. The center of mass computed for each group are used as the points in the next iteration of the algorithm. Then, the algorithm reassigns each value in the data set to their new closest point. The algorithm continues until the distance in center of masses for consecutive iterations falls below a certain threshold. The resulting data set values are now clustered based on their minimized distance to each point."),             
+             p("The two variables used to cluster were the wine price and the wine points rating. The variables for wine price and wine points rating were rescaled before performing the kmeans algorithm, so that each variable had the same mean and standard deviation. Scaling the data is imperitive because the range of prices are as big as 0 to $3000 whereas the range of points are 80 to 100. Since the kmeans algorith computes distances of points, the distance calculation would almost entirely depend on price if it were not scaled."),
+             p("The SSE (sum squared error) was calculated between the values in the data set and their assigned cluster, for various cluster numbers. This was to see what a reasonable range of clusters would be for the interactive component of the application. The plot below shows how the SSE varies by number of clusters, for each wine variety. Based on SSE for each variety by number of clusters, it seemed that a range of 1 to 8 clusters would be a good range for the interactive features of the application."),
+             plotOutput("plotSSE"),
+             p("After running the kmean clustering algorithm based on number of clusters, the app assigned a cluster number to each varietyDF's review. The cluster number for each wine review was added as a new column in each varietyDF's data frame."),
              h4("4.) Extract Descriptive Words"),
              p("The analysis then extracted the most common words from the wine descriptions in each varietyDF's cluster."),
              p("This required filtering out non-descriptive words from the descriptions."),
@@ -147,7 +174,7 @@ ui <- fluidPage(
              ),
     tabPanel("About",
              h4("About App"),
-             p("This app explores how wine ratings change with price and how higher rated wines, or more expensive wines, varied in how they were described. Is an expensive Carbernet just as oak-flavored as a cheap one? Explore the dashboard to find out!"),
+             p("This app explores how wine flavor profiles vary for different wine prices and ratings. The app uses clustering algorithms to group wines of certain prices and ratings and identifies the most frequent descriptive words used to describe wines of each group. By reducing wine to its descriptions, it helps create a standardized view of wine. Then, users of the app can view how price and ratings compare to this standard. Do $500+ Chardonnays with good ratings have the same level of acidity as < $500 Chardonnays with good ratings? Explore the dashboard to find out!"),
              p("Author: Wylie Borden"),
              p("Created in rShiny")
              )
@@ -166,7 +193,6 @@ server <- function(input, output) {
     set.seed(1)
     clusters = kmeans(scale(varietyDF[,c("price","points")]), input$clusters)
     varietyDF$cluster = clusters$cluster
-    print(head(varietyDF$cluster))
     varietyDF$Cluster = as.character(clusters$cluster) #character class clusters
     
     #Plot:
@@ -183,11 +209,16 @@ server <- function(input, output) {
     set.seed(1)
     clusters = kmeans(scale(varietyDF[,c("price","points")]), input$clusters)
     varietyDF$cluster = clusters$cluster
-    print(head(varietyDF$cluster))
     radarplotsfig(varietyDF)
   })
   
-  output$summaryTable = renderTable({head(wineDFraw)})
+  output$plotSSE = renderPlot({
+    plotSSE(wineDF)
+  })
+  
+  output$summaryTable = renderTable({
+    wineDFraw[c((input$rowsView+1):(input$rowsView+10)),]
+  })
   
 }
 
